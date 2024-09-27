@@ -3,6 +3,7 @@ title: "Lab4"
 author: "Haoyu"
 format: html
 editor: visual
+embed-resources: true
 ---
 
 ## Question1:Read in the data
