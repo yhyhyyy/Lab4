@@ -1,0 +1,170 @@
+---
+title: "Lab4"
+author: "Haoyu"
+format: html
+editor: visual
+---
+
+## Question1:Read in the data
+
+```{r}
+if (!file.exists("met_all.gz"))
+  download.file(
+    url = "https://raw.githubusercontent.com/USCbiostats/data-science-data/master/02_met/met_all.gz",
+    destfile = "met_all.gz",
+    method   = "libcurl",
+    timeout  = 60
+    )
+met <- data.table::fread("met_all.gz")
+```
+
+## Question2: Prepare the data
+
+```{r}
+library(data.table)
+library(ggplot2)
+str(met)
+met <- met[met$temp > -17]
+met[met$elev==9999.0, ] <- NA
+met[, date := as.Date(paste(year, month, day, sep = "-"))]
+str(met$date)
+met <- met[week(date) == week(as.Date(paste(2019, 8, 1, sep = "-")))]
+met_avg <- met[,.(
+  temp     = mean(temp,na.rm=TRUE),
+  rh       = mean(rh,na.rm=TRUE),
+  wind.sp  = mean(wind.sp,na.rm=TRUE),
+  vis.dist = mean(vis.dist,na.rm=TRUE),
+  dew.point = mean(dew.point,na.rm=TRUE),
+  lat      = mean(lat),
+  lon      = mean(lon), 
+  elev     = mean(elev,na.rm=TRUE)
+), by=c("USAFID")]
+
+# Create a region variable based on lon and lat
+met_avg[, region := fifelse(lat >= 39.71 & lon >= -98, "NE",
+                 fifelse(lat >= 39.71 & lon < -98, "NW",
+                 fifelse(lat < 39.71 & lon >= -98, "SE", "SW")))]
+
+met_avg[, elev_cat  := cut(
+  x      = elev,
+  breaks = c(-Inf, 0, 1000, 2000, Inf),
+  labels = c("Low", "Medium", "High", "Very High"),
+  right = F
+)]
+
+```
+
+## Question 3: **Use `geom_violin` to examine the wind speed and dew point by region**
+
+```{r}
+met_avg <- met_avg[!is.na(wind.sp) & !is.na(dew.point)]
+ggplot(met_avg) +
+  geom_violin(aes(x = 1, y = wind.sp, fill = "Wind Speed")) +
+  geom_violin(aes(x = 1, y = dew.point, fill = "Dew Point")) +
+  facet_grid( ~region) 
+```
+
+```         
+    From the plot, we can see that the dew points of northeast(NE) and southease(SE) are overall higher, while the dew points of northwest(NW) and southwest(SW) are more scattered and overall lower. In terms of temperature, the temperature in the west is higher than that in the east.
+```
+
+## Question 4: **Use `geom_jitter` with `stat_smooth` to examine the association between dew point and wind speed by region**
+
+```{r}
+ggplot(met_avg, aes(x = dew.point, y = wind.sp, color = region, linetype = region)) +
+  geom_jitter(alpha = 0.6, size = 1.5) +  
+  stat_smooth(method = "lm", se = FALSE)  
+```
+
+```         
+From the plot, there is a weak positive relationship between dew point and wind speed in the northeast(NE) region. That is, as the dew point increases, the wind speed also increases slightly. There is little apparent correlation between dew point and wind speed in the northwest(NW) region. There is a strong positive correlation between dew point and wind speed in the southeast (SE) region. There also seems to be a certain positive correlation between dew point and wind speed in the Southwest (SW) region, but it is weaker than in the Southeast region. Overall, the effect of dew point on wind speed is not decisive and may be affected by other factors.
+```
+
+## Question 5: **Use `geom_bar` to create barplots of the weather stations by elevation category colored by region**
+
+```{r}
+met_avg <- met_avg[!is.na(elev_cat)]
+ggplot(met_avg, aes(x = elev_cat, fill = region)) +
+    geom_bar(position = "dodge") +
+    scale_fill_brewer(palette = "Set3") + 
+    labs(title = "Weather Stations by Elevation Category",
+         x = "Elevation Category",
+         y = "Number of Weather Stations",
+         fill = "Region") +
+    theme_minimal()
+```
+
+```         
+From the plot, we can find that the number of weather stations is the largest in areas with medium altitudes(0-1000), especially in the southeast (SE) region, while the number of weather stations is relatively small in areas with the lowest and highest elevation. In addition, the overall elevation of the weather station in the west is higher than that in the east.
+```
+
+## Question 6: **Use `stat_summary` to examine mean dew point and wind speed by region with standard deviation error bars**
+
+```{r}
+met_avg <- met_avg[!is.na(wind.sp) & !is.na(dew.point)]
+ggplot(met_avg, aes(x = region)) +
+    stat_summary(aes(y = dew.point, fill = "dew point"), 
+                 fun.data = "mean_sdl", 
+                 geom = "bar")+
+    stat_summary(aes(y = dew.point, fill = "dew point"), 
+                 fun.data = "mean_sdl", 
+                 geom = "errorbar") +
+    stat_summary(aes(y = wind.sp, fill = "wind"), 
+                 fun.data = "mean_sdl", 
+                 geom = "bar") +
+    stat_summary(aes(y = wind.sp, fill = "wind"), 
+                 fun.data = "mean_sdl", 
+                 geom = "errorbar") +
+    labs(title = "Mean Dew Point and Wind Speed by Region",
+         x = "Region",
+         y = "Mean Value") +
+    theme_minimal()
+```
+
+```         
+From the plot, the southeast(SE) region has the highest average dew point and wind speed, while the northwest(NW) region has the lowest average. In addition, the standard deviations of dew point and wind speed are relatively large in the southeast(SE) region, while it is small in the northwest(NW) region. This shows that the changes in dew point and wind speed are relatively large in the southeast(SE) region, while the changes in dew point and wind speed in the northwest(NW) are relatively small.
+```
+
+## Question 7: **Make a map showing the spatial trend in relative humidity in the US**
+
+```{r}
+library(leaflet)
+top_10 <- met_avg[rank(-rh) <= 10]
+pal <- colorNumeric(palette = "YlGnBu", domain = met_avg$rh)
+map <- leaflet(data = met_avg) %>%
+    addTiles() %>%
+    addCircleMarkers(
+        ~lon, ~lat,  
+        radius = 5,
+        color = ~pal(rh), 
+        stroke = FALSE,
+        fillOpacity = 0.7,
+        popup = ~paste(USAFID, "<br>RH:", rh, "%")
+    ) %>%
+  addMarkers(
+        data = top_10,
+        ~lon, ~lat,
+        popup = ~paste(USAFID, "<br>RH:", rh, "%"),
+        label = ~USAFID
+    ) %>%
+    addLegend(pal = pal, values = ~rh, opacity = 0.7, title = "Relative Humidity (%)", position = "bottomright")
+map
+```
+
+From the figure, the relative humidity in the United States gradually increases from west to east, with the highest humidity mostly in the central and eastern parts of the country.
+
+## Question 8: **Use a ggplot extension**
+
+```{r}
+library(ggpubr)
+library(ggridges)
+library(ggplot2)
+library(dplyr)
+p <- ggplot(met_avg, aes(x = temp, y = region, fill = region)) +
+    geom_density_ridges(alpha = 0.7, bandwidth = 0.781) + 
+    labs(title = "Density of Mean Temperature by Region",
+         x = "Mean Temperature",
+         y = "Region") +
+    theme_minimal() 
+print(p)
+```
